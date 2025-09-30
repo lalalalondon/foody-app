@@ -1,0 +1,14 @@
+<div class="container">
+    <h1>Today's Delivery Menu</h1>
+    <h2>To place an order, dial operator at 555-2939.</h2>
+    <div class="dishes-grid">
+      <div class="dish-card" *ngFor="let dish of dishes">
+        <h3>{{ dish.name }}</h3>
+        <p class="description">{{ dish.description }}</p>
+        <p class="restaurant">{{ dish.restaurantName }}</p>
+        <p class="category">{{ dish.category }}</p>
+        <p class="price">${{ dish.price }}</p>
+        <p class="calories">{{ dish.calories }} cal</p>
+      </div>
+    </div>
+  </div>

@@ -1,0 +1,95 @@
+.container {
+    padding :20px;
+    background-color: antiquewhite;
+}
+
+h1 {
+    text-align: center;
+    color: green;
+    margin-bottom: 20px;
+}
+
+h2 {
+    text-align: center;
+    color:  blue;
+    margin-bottom: 20px;
+}
+
+.dishes-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: center;
+
+}
+
+.dish-card {
+    background: pink;
+    border: 1px solid black;
+    width: 250px;
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.dish-card h3 {
+    color: green;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+}
+
+.dish-card p {
+    margin: 5px 0;
+}
+
+
+
+.description {
+    color: blue;
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+
+/* 
+.add-btn {
+    background-color: yellow;
+    color: black;
+    border: 1px solid black;
+    padding: 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    width: 100%
+}
+
+.add-btn:hover {
+    background-color: #45a049;
+} */
+
+
+
+.loading {
+    text-align: center;
+    padding: 20px;
+    color: #666
+}
+
+.error {
+    color: red;
+    background-color: white;
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+  
+  .dishes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+  }
+
+  
+  .price {
+    font-weight: bold;
+    color: red;
+  }
