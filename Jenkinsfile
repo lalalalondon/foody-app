@@ -3,10 +3,12 @@ pipeline {
     
     tools {
         nodejs 'NodeJS'
+        maven 'Maven' // You'll need to configure Maven in Jenkins Global Tools
     }
     
     environment {
-        DOCKER_IMAGE = 'foody-app'
+        FRONTEND_IMAGE = 'foody-frontend'
+        BACKEND_IMAGE = 'foody-backend'
         REPO_URL = 'https://github.com/lalalalondon/foody-app.git'
         FRONTEND_DIR = 'foody-frontend'
         BACKEND_DIR = 'foody-backend'
@@ -21,135 +23,189 @@ pipeline {
             }
         }
 
-        stage('Install Frontend Dependencies') {
+        stage('Build Frontend') {
             steps {
                 dir("${FRONTEND_DIR}") {
-                    echo 'Installing frontend dependencies...'
+                    echo 'Building Angular frontend...'
                     sh '''
-                        pwd
-                        ls -la
-                        node --version
-                        npm --version
+                        echo "=== Installing dependencies ==="
                         npm install
-                        echo "✅ Frontend dependencies installed"
-                    '''
-                }
-            }
-        }
-
-        stage('Build Angular Application') {
-            steps {
-                dir("${FRONTEND_DIR}") {
-                    echo 'Building Angular application...'
-                    sh '''
-                        # Build the Angular app
+                        
+                        echo "=== Building Angular app ==="
                         npm run build || npx ng build
                         
-                        # Check if dist folder exists
+                        # Verify build output
                         if [ -d "dist" ]; then
                             echo "✅ Angular build successful"
                             ls -la dist/
                         else
-                            echo "⚠️ dist folder not found, checking other locations"
-                            find . -name "dist" -type d
+                            echo "❌ Build failed - dist folder not found"
+                            exit 1
                         fi
                     '''
                 }
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build Backend') {
             steps {
-                echo 'Building Docker image...'
-                sh '''
-                    # Check if Dockerfile exists in root
-                    if [ -f "Dockerfile" ]; then
-                        echo "Using existing Dockerfile"
-                    else
-                        echo "Creating Dockerfile..."
-                        cat > Dockerfile << 'EOF'
+                dir("${BACKEND_DIR}") {
+                    echo 'Building Spring Boot backend...'
+                    sh '''
+                        echo "=== Building Java application with Maven ==="
+                        
+                        # Check if mvnw exists (Maven wrapper)
+                        if [ -f "mvnw" ]; then
+                            echo "Using Maven Wrapper"
+                            chmod +x mvnw
+                            ./mvnw clean package -DskipTests
+                        elif [ -f "pom.xml" ]; then
+                            echo "Using system Maven"
+                            mvn clean package -DskipTests
+                        else
+                            echo "❌ No pom.xml found - not a Maven project"
+                            exit 1
+                        fi
+                        
+                        # Verify JAR was created
+                        if [ -d "target" ]; then
+                            echo "✅ Java build successful"
+                            ls -la target/*.jar
+                        else
+                            echo "❌ Build failed - target folder not found"
+                            exit 1
+                        fi
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Images') {
+            parallel {
+                stage('Frontend Docker Image') {
+                    steps {
+                        echo 'Building frontend Docker image...'
+                        sh '''
+                            # Create Dockerfile for frontend if it doesn't exist
+                            cat > Dockerfile.frontend << 'EOF'
 # Build stage
 FROM node:18-alpine AS builder
 WORKDIR /app
-COPY ${FRONTEND_DIR}/package*.json ./
+COPY foody-frontend/package*.json ./
 RUN npm ci || npm install
-COPY ${FRONTEND_DIR}/ ./
+COPY foody-frontend/ ./
 RUN npm run build || npx ng build
 
 # Production stage
 FROM nginx:alpine
-COPY --from=builder /app/dist/* /usr/share/nginx/html/
-# If dist has a subfolder with app name, use this instead:
-# COPY --from=builder /app/dist/foody-frontend /usr/share/nginx/html/
+COPY --from=builder /app/dist/foody-frontend /usr/share/nginx/html
+# If your dist structure is different, adjust the path above
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 EOF
-                    fi
-                    
-                    # Build Docker image
-                    docker build -t ${DOCKER_IMAGE}:latest .
-                    docker images | grep ${DOCKER_IMAGE}
-                    echo "✅ Docker image built"
-                '''
-            }
-        }
-
-        stage('Deploy Frontend Container') {
-            steps {
-                echo 'Deploying frontend container...'
-                sh '''
-                    # Stop and remove existing container
-                    docker stop foody-frontend || true
-                    docker rm foody-frontend || true
-
-                    # Run frontend container on port 3000
-                    docker run -d --name foody-frontend -p 3000:80 ${DOCKER_IMAGE}:latest
-
-                    # Wait for container to start
-                    sleep 5
-
-                    # Verify deployment
-                    if docker ps | grep foody-frontend; then
-                        echo "✅ Frontend container deployed"
-                        echo "🌐 Frontend accessible at port 3000"
-                    else
-                        echo "❌ Frontend deployment failed"
-                        docker logs foody-frontend
-                        exit 1
-                    fi
-                '''
-            }
-        }
-
-        stage('Deploy Backend (Optional)') {
-            when {
-                expression { 
-                    fileExists("${BACKEND_DIR}/package.json") || 
-                    fileExists("${BACKEND_DIR}/pom.xml") || 
-                    fileExists("${BACKEND_DIR}/requirements.txt")
+                            
+                            # Build frontend image
+                            docker build -f Dockerfile.frontend -t ${FRONTEND_IMAGE}:latest .
+                            echo "✅ Frontend Docker image built"
+                        '''
+                    }
+                }
+                
+                stage('Backend Docker Image') {
+                    steps {
+                        echo 'Building backend Docker image...'
+                        sh '''
+                            # The Dockerfile in root is for Java backend
+                            # Build backend image
+                            docker build -f Dockerfile -t ${BACKEND_IMAGE}:latest .
+                            echo "✅ Backend Docker image built"
+                        '''
+                    }
                 }
             }
-            steps {
-                echo 'Backend deployment can be configured based on technology used'
-                sh '''
-                    echo "Backend folder contents:"
-                    ls -la ${BACKEND_DIR}/ || echo "Backend folder structure to be determined"
-                '''
+        }
+
+        stage('Deploy Containers') {
+            parallel {
+                stage('Deploy Frontend') {
+                    steps {
+                        echo 'Deploying frontend container...'
+                        sh '''
+                            # Stop and remove existing frontend container
+                            docker stop foody-frontend || true
+                            docker rm foody-frontend || true
+
+                            # Run frontend container on port 3000
+                            docker run -d --name foody-frontend \
+                                -p 3000:80 \
+                                ${FRONTEND_IMAGE}:latest
+
+                            # Verify deployment
+                            sleep 3
+                            if docker ps | grep foody-frontend; then
+                                echo "✅ Frontend deployed on port 3000"
+                            else
+                                echo "❌ Frontend deployment failed"
+                                docker logs foody-frontend
+                                exit 1
+                            fi
+                        '''
+                    }
+                }
+                
+                stage('Deploy Backend') {
+                    steps {
+                        echo 'Deploying backend container...'
+                        sh '''
+                            # Stop and remove existing backend container
+                            docker stop foody-backend || true
+                            docker rm foody-backend || true
+
+                            # Run backend container on port 9090
+                            docker run -d --name foody-backend \
+                                -p 9090:9090 \
+                                ${BACKEND_IMAGE}:latest
+
+                            # Wait for Spring Boot to start (takes longer than Angular)
+                            echo "Waiting for Spring Boot to start..."
+                            sleep 15
+
+                            # Verify deployment
+                            if docker ps | grep foody-backend; then
+                                echo "✅ Backend deployed on port 9090"
+                            else
+                                echo "❌ Backend deployment failed"
+                                docker logs foody-backend
+                                exit 1
+                            fi
+                        '''
+                    }
+                }
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Verify Full Stack') {
             steps {
-                echo 'Verifying full deployment...'
+                echo 'Verifying full stack deployment...'
                 sh '''
                     echo "=== Running Containers ==="
                     docker ps
                     
-                    echo "=== Port Status ==="
-                    netstat -tulpn | grep -E "3000|8080" || true
-                    
-                    echo "=== Test Frontend ==="
+                    echo "=== Testing Frontend ==="
                     curl -I http://localhost:3000 || echo "Frontend might still be starting..."
+                    
+                    echo "=== Testing Backend ==="
+                    curl -I http://localhost:9090 || echo "Backend might still be starting..."
+                    
+                    echo "=== Network Configuration ==="
+                    # Create network for containers to communicate if needed
+                    docker network create foody-network || true
+                    docker network connect foody-network foody-frontend || true
+                    docker network connect foody-network foody-backend || true
+                    
+                    echo "✅ Full stack deployment complete!"
+                    echo "📱 Frontend: http://localhost:3000"
+                    echo "🔧 Backend API: http://localhost:9090"
                 '''
             }
         }
@@ -160,24 +216,34 @@ EOF
             echo 'Pipeline completed!'
         }
         success {
-            echo '🎉 Build and deployment successful!'
+            echo '🎉 Full stack build and deployment successful!'
             sh '''
-                echo "Access your application:"
-                echo "Frontend: http://localhost:3000"
+                echo "=== Access your application ==="
+                echo "Frontend (Angular): http://localhost:3000"
+                echo "Backend API (Spring Boot): http://localhost:9090"
+                
+                # If on EC2, show external URLs
                 if [ -f /usr/bin/curl ]; then
                     EC2_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "localhost")
-                    echo "External access: http://${EC2_IP}:3000"
+                    if [ "$EC2_IP" != "localhost" ]; then
+                        echo "External Frontend: http://${EC2_IP}:3000"
+                        echo "External Backend: http://${EC2_IP}:9090"
+                    fi
                 fi
             '''
         }
         failure {
             echo '❌ Build or deployment failed'
             sh '''
-                echo "=== Docker Logs ==="
-                docker logs foody-frontend || echo "No frontend container logs"
-                echo "=== Checking workspace ==="
+                echo "=== Checking logs ==="
+                docker logs foody-frontend || echo "No frontend logs"
+                docker logs foody-backend || echo "No backend logs"
+                
+                echo "=== Workspace structure ==="
                 ls -la
                 ls -la ${FRONTEND_DIR}/ || true
+                ls -la ${BACKEND_DIR}/ || true
+                ls -la ${BACKEND_DIR}/target/ || true
             '''
         }
     }
