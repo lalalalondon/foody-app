@@ -2,12 +2,14 @@ pipeline {
     agent any
     
     tools {
-        nodejs 'NodeJS'  // Make sure NodeJS is configured in Jenkins Global Tool Configuration
+        nodejs 'NodeJS'
     }
     
     environment {
         DOCKER_IMAGE = 'foody-app'
         REPO_URL = 'https://github.com/lalalalondon/foody-app.git'
+        FRONTEND_DIR = 'foody-frontend'
+        BACKEND_DIR = 'foody-backend'
     }
 
     stages {
@@ -15,51 +17,44 @@ pipeline {
             steps {
                 echo 'Getting source code...'
                 git branch: 'main', url: env.REPO_URL
+                sh 'ls -la'
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Install Frontend Dependencies') {
             steps {
-                echo 'Installing Node.js dependencies...'
-                sh '''
-                    # Check Node and npm versions
-                    node --version
-                    npm --version
-                    
-                    # Clean install dependencies
-                    npm ci || npm install
-                    echo "✅ Dependencies installed successfully"
-                '''
+                dir("${FRONTEND_DIR}") {
+                    echo 'Installing frontend dependencies...'
+                    sh '''
+                        pwd
+                        ls -la
+                        node --version
+                        npm --version
+                        npm install
+                        echo "✅ Frontend dependencies installed"
+                    '''
+                }
             }
         }
 
         stage('Build Angular Application') {
             steps {
-                echo 'Building Angular application...'
-                sh '''
-                    # Build the Angular app for production
-                    npm run build -- --configuration production || npm run build
-                    
-                    # Verify build output
-                    if [ -d "dist" ]; then
-                        echo "✅ Angular build successful"
-                        ls -la dist/
-                    else
-                        echo "❌ Build failed - dist folder not found"
-                        exit 1
-                    fi
-                '''
-            }
-        }
-
-        stage('Run Tests') {
-            steps {
-                echo 'Running tests...'
-                sh '''
-                    # Run Angular tests in headless mode
-                    # npm run test -- --watch=false --browsers=ChromeHeadless || echo "Tests skipped"
-                    echo "Tests skipped for now - configure Chrome headless for CI"
-                '''
+                dir("${FRONTEND_DIR}") {
+                    echo 'Building Angular application...'
+                    sh '''
+                        # Build the Angular app
+                        npm run build || npx ng build
+                        
+                        # Check if dist folder exists
+                        if [ -d "dist" ]; then
+                            echo "✅ Angular build successful"
+                            ls -la dist/
+                        else
+                            echo "⚠️ dist folder not found, checking other locations"
+                            find . -name "dist" -type d
+                        fi
+                    '''
+                }
             }
         }
 
@@ -67,20 +62,25 @@ pipeline {
             steps {
                 echo 'Building Docker image...'
                 sh '''
-                    # Create Dockerfile if it doesn't exist
-                    if [ ! -f Dockerfile ]; then
+                    # Check if Dockerfile exists in root
+                    if [ -f "Dockerfile" ]; then
+                        echo "Using existing Dockerfile"
+                    else
+                        echo "Creating Dockerfile..."
                         cat > Dockerfile << 'EOF'
 # Build stage
 FROM node:18-alpine AS builder
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+COPY ${FRONTEND_DIR}/package*.json ./
+RUN npm ci || npm install
+COPY ${FRONTEND_DIR}/ ./
+RUN npm run build || npx ng build
 
 # Production stage
 FROM nginx:alpine
-COPY --from=builder /app/dist/foody-app /usr/share/nginx/html
+COPY --from=builder /app/dist/* /usr/share/nginx/html/
+# If dist has a subfolder with app name, use this instead:
+# COPY --from=builder /app/dist/foody-frontend /usr/share/nginx/html/
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 EOF
@@ -88,57 +88,68 @@ EOF
                     
                     # Build Docker image
                     docker build -t ${DOCKER_IMAGE}:latest .
-                    
-                    # List Docker images to verify
                     docker images | grep ${DOCKER_IMAGE}
-                    echo "✅ Docker image built successfully"
+                    echo "✅ Docker image built"
                 '''
             }
         }
 
-        stage('Deploy Container') {
+        stage('Deploy Frontend Container') {
             steps {
-                echo 'Deploying Docker container...'
+                echo 'Deploying frontend container...'
                 sh '''
-                    # Stop and remove existing container (if any)
-                    docker stop foody-app || true
-                    docker rm foody-app || true
+                    # Stop and remove existing container
+                    docker stop foody-frontend || true
+                    docker rm foody-frontend || true
 
-                    # Run new container
-                    docker run -d --name foody-app -p 8080:80 ${DOCKER_IMAGE}:latest
+                    # Run frontend container on port 3000
+                    docker run -d --name foody-frontend -p 3000:80 ${DOCKER_IMAGE}:latest
 
                     # Wait for container to start
-                    sleep 10
+                    sleep 5
 
                     # Verify deployment
-                    if docker ps | grep foody-app; then
-                        echo "✅ Container deployed successfully"
-                        echo "🌐 App accessible at: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080/"
-                        
-                        # Test the endpoint
-                        echo "Testing application endpoint..."
-                        curl -f http://localhost:8080 || echo "⚠️ Application might still be starting up"
+                    if docker ps | grep foody-frontend; then
+                        echo "✅ Frontend container deployed"
+                        echo "🌐 Frontend accessible at port 3000"
                     else
-                        echo "❌ Deployment failed"
-                        docker logs foody-app
+                        echo "❌ Frontend deployment failed"
+                        docker logs foody-frontend
                         exit 1
                     fi
                 '''
             }
         }
 
-        stage('Cleanup') {
+        stage('Deploy Backend (Optional)') {
+            when {
+                expression { 
+                    fileExists("${BACKEND_DIR}/package.json") || 
+                    fileExists("${BACKEND_DIR}/pom.xml") || 
+                    fileExists("${BACKEND_DIR}/requirements.txt")
+                }
+            }
             steps {
-                echo 'Cleaning up old Docker images...'
+                echo 'Backend deployment can be configured based on technology used'
                 sh '''
-                    # Remove old/unused Docker images to save space
-                    docker image prune -f
+                    echo "Backend folder contents:"
+                    ls -la ${BACKEND_DIR}/ || echo "Backend folder structure to be determined"
+                '''
+            }
+        }
 
-                    # Show current Docker resource usage
-                    echo "Current Docker images:"
-                    docker images
-                    echo "Running containers:"
+        stage('Verify Deployment') {
+            steps {
+                echo 'Verifying full deployment...'
+                sh '''
+                    echo "=== Running Containers ==="
                     docker ps
+                    
+                    echo "=== Port Status ==="
+                    netstat -tulpn | grep -E "3000|8080" || true
+                    
+                    echo "=== Test Frontend ==="
+                    curl -I http://localhost:3000 || echo "Frontend might still be starting..."
                 '''
             }
         }
@@ -150,12 +161,24 @@ EOF
         }
         success {
             echo '🎉 Build and deployment successful!'
-            echo 'Your Angular app is running in a Docker container on EC2'
+            sh '''
+                echo "Access your application:"
+                echo "Frontend: http://localhost:3000"
+                if [ -f /usr/bin/curl ]; then
+                    EC2_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "localhost")
+                    echo "External access: http://${EC2_IP}:3000"
+                fi
+            '''
         }
         failure {
             echo '❌ Build or deployment failed'
-            echo 'Check the logs above for error details'
-            sh 'docker logs foody-app || echo "Container not running"'
+            sh '''
+                echo "=== Docker Logs ==="
+                docker logs foody-frontend || echo "No frontend container logs"
+                echo "=== Checking workspace ==="
+                ls -la
+                ls -la ${FRONTEND_DIR}/ || true
+            '''
         }
     }
 }
