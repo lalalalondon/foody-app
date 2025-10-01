@@ -1,29 +1,30 @@
-# Multi-stage build for full-stack application
 FROM node:18-alpine AS frontend-builder
-WORKDIR /app/frontend
+WORKDIR /app
 COPY foody-frontend/package*.json ./
-RUN npm ci
+RUN npm ci || npm install
 COPY foody-frontend/ ./
-RUN npm run build
+RUN npm run build || npx ng build
 
+# Stage 2: Setup Java Backend with Frontend
 FROM eclipse-temurin:21
 WORKDIR /app
 
-# Install nginx for serving Angular
-RUN apt-get update && apt-get install -y nginx && rm -rf /var/lib/apt/lists/*
+# Install nginx
+RUN apt-get update && \
+    apt-get install -y nginx && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy backend JAR
-ARG JAR_FILE=foody-backend/target/*.jar
-COPY ${JAR_FILE} backend.jar
+COPY foody-backend/target/*.jar backend.jar
 
-# Copy frontend build to nginx
-COPY --from=frontend-builder /app/frontend/dist/foody-frontend /usr/share/nginx/html
+# Copy frontend build
+COPY --from=frontend-builder /app/dist/foody-frontend /usr/share/nginx/html
 
 # Copy SQLite database
 RUN mkdir -p /app/data
 COPY foody-backend/src/main/resources/database/foodyapp.db /app/data/
 
-# Configure nginx to proxy API requests to backend
+# Configure nginx
 RUN echo 'server { \
     listen 80; \
     location / { \
@@ -32,13 +33,16 @@ RUN echo 'server { \
     } \
     location /api/ { \
         proxy_pass http://localhost:9090/; \
+        proxy_set_header Host $host; \
+        proxy_set_header X-Real-IP $remote_addr; \
     } \
 }' > /etc/nginx/sites-available/default
 
-# Start script
-RUN echo '#!/bin/sh\n\
+# Create start script
+RUN echo '#!/bin/bash\n\
 service nginx start\n\
-java -jar /app/backend.jar' > /app/start.sh && chmod +x /app/start.sh
+java -jar /app/backend.jar' > /app/start.sh && \
+chmod +x /app/start.sh
 
 EXPOSE 80 9090
 ENTRYPOINT ["/app/start.sh"]
