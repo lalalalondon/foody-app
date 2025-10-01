@@ -19,7 +19,7 @@ RUN apt-get update && \
 COPY foody-backend/target/*.jar backend.jar
 
 # Copy frontend build (check if it's in browser subfolder for Angular 17+)
-COPY --from=frontend-builder /app/dist/foody-frontend /usr/share/nginx/html
+COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 
 # Copy SQLite database
 RUN mkdir -p /app/data
