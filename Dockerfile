@@ -1,10 +1,4 @@
-Perfect! Node.js is now v20.19.5, which meets Angular's requirements. The issue is that your current Dockerfile on GitHub is only for the backend - it's not the multi-stage build we need for both frontend and backend.
-Update Your Dockerfile on GitHub
-You need to replace your current backend-only Dockerfile with the multi-stage build version. Here's what to do:
-bashcd ~/foody-app
-nano Dockerfile
-Replace the entire content with this multi-stage Dockerfile:
-dockerfile# Stage 1: Build Angular Frontend
+# Stage 1: Build Angular Frontend
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app
 COPY foody-frontend/package*.json ./
