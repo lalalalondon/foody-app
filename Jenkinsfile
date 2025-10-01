@@ -161,9 +161,13 @@ EOF
                             docker stop foody-backend || true
                             docker rm foody-backend || true
 
-                            # Run backend container on port 9090
+                            # Create volume for SQLite database persistence
+                            docker volume create foody-db-volume || true
+
+                            # Run backend container on port 9090 with volume for SQLite
                             docker run -d --name foody-backend \
                                 -p 9090:9090 \
+                                -v foody-db-volume:/app/data \
                                 ${BACKEND_IMAGE}:latest
 
                             # Wait for Spring Boot to start (takes longer than Angular)
@@ -173,6 +177,7 @@ EOF
                             # Verify deployment
                             if docker ps | grep foody-backend; then
                                 echo "✅ Backend deployed on port 9090"
+                                echo "📁 SQLite database persisted in Docker volume"
                             else
                                 echo "❌ Backend deployment failed"
                                 docker logs foody-backend
